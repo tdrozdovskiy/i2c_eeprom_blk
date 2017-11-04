@@ -1,4 +1,11 @@
-/* Disk on EEPROM Driver */
+/*
+ *  eeprom_block.c
+ *
+ *  EEPROM block device code and related operation function
+
+ *  Copyright (C) 2017  Taras Drozdovskyi t.drozdovskiy@gmail.com
+ */
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
@@ -17,8 +24,7 @@ static u_int eb_major = 0;
 /* 
  * The internal structure representation of our Device
  */
-static struct eb_device
-{
+static struct eb_device {
 	/* Size is the size of the device (in sectors) */
 	unsigned int size;
 	/* For exclusive access to our request queue */
@@ -33,8 +39,8 @@ static int eb_open(struct block_device *bdev, fmode_t mode)
 {
 	unsigned unit = iminor(bdev->bd_inode);
 
-	printk(KERN_INFO "eb: Device is opened\n");
-	printk(KERN_INFO "eb: Inode number is %d\n", unit);
+	printk(KERN_DEBUG "eb: Device is opened\n");
+	printk(KERN_DEBUG "eb: Inode number is %d\n", unit);
 
 	if (unit > EB_MINOR_CNT)
 		return -ENODEV;
@@ -43,7 +49,7 @@ static int eb_open(struct block_device *bdev, fmode_t mode)
 
 static int eb_close(struct gendisk *disk, fmode_t mode)
 {
-	printk(KERN_INFO "eb: Device is closed\n");
+	printk(KERN_DEBUG "eb: Device is closed\n");
 	return 0;
 }
 
@@ -67,42 +73,37 @@ static int eb_transfer(struct request *req)
 
 	int ret = 0;
 
-	//printk(KERN_DEBUG "eb: Dir:%d; Sec:%lld; Cnt:%d\n", dir, start_sector, sector_cnt);
+//	printk(KERN_DEBUG "eb: Dir:%d; Sec:%lld; Cnt:%d\n", dir, start_sector,
+//			sector_cnt);
 
 	sector_offset = 0;
 	rq_for_each_segment(bv, req, iter)
 	{
 		buffer = page_address(bv->bv_page) + bv->bv_offset;
-		if (bv->bv_len % EB_SECTOR_SIZE != 0)
-		{
+		if (bv->bv_len % EB_SECTOR_SIZE != 0) {
 			printk(KERN_ERR "eb: Should never happen: "
-				"bio size (%d) is not a multiple of EB_SECTOR_SIZE (%d).\n"
-				"This may lead to data truncation.\n",
-				bv->bv_len, EB_SECTOR_SIZE);
+					"bio size (%d) is not a multiple of EB_SECTOR_SIZE (%d).\n"
+					"This may lead to data truncation.\n",
+					bv->bv_len, EB_SECTOR_SIZE);
 			ret = -EIO;
 		}
 		sectors = bv->bv_len / EB_SECTOR_SIZE;
 		printk(KERN_DEBUG "eb: Sector Offset: %lld; Buffer: %p; Length: %d sectors\n",
-			sector_offset, buffer, sectors);
+				sector_offset, buffer, sectors);
 		if (dir == WRITE) /* Write to the device */
-		{
 			eeprom_device_write(start_sector + sector_offset, buffer, sectors);
-		}
 		else /* Read from the device */
-		{
 			eeprom_device_read(start_sector + sector_offset, buffer, sectors);
-		}
 		sector_offset += sectors;
 	}
-	if (sector_offset != sector_cnt)
-	{
+	if (sector_offset != sector_cnt) {
 		printk(KERN_ERR "eb: bio info doesn't match with the request info");
 		ret = -EIO;
 	}
 
 	return ret;
 }
-	
+
 /*
  * Represents a block I/O request for us to execute
  */
@@ -112,15 +113,13 @@ static void eb_request(struct request_queue *q)
 	int ret;
 
 	/* Gets the current request from the dispatch queue */
-	while ((req = blk_fetch_request(q)) != NULL)
-	{
+	while ((req = blk_fetch_request(q)) != NULL) {
 #if 0
 		/*
 		 * This function tells us whether we are looking at a filesystem request
 		 * - one that moves block of data
 		 */
-		if (!blk_fs_request(req))
-		{
+		if (!blk_fs_request(req)) {
 			printk(KERN_NOTICE "eb: Skip non-fs request\n");
 			/* We pass 0 to indicate that we successfully completed the request */
 			__blk_end_request_all(req, 0);
@@ -137,13 +136,12 @@ static void eb_request(struct request_queue *q)
 /* 
  * These are the file operations that performed on the eeprom block device
  */
-static struct block_device_operations eb_fops =
-{
-	.owner = THIS_MODULE,
-	.open = eb_open,
-	.release = eb_close,
+static struct block_device_operations eb_fops = {
+		.owner = THIS_MODULE,
+		.open = eb_open,
+		.release = eb_close,
 };
-	
+
 /* 
  * This is the registration and initialization section of the eeprom block device
  * driver
@@ -154,31 +152,25 @@ static int __init eb_init(void)
 
 	/* Set up our EEPROM Device */
 	if ((ret = eeprom_device_init()) < 0)
-	{
 		return ret;
-	}
 	eb_dev.size = ret;
 
 	/* Get Registered */
 	eb_major = register_blkdev(eb_major, "eb");
-	if (eb_major <= 0)
-	{
+	if (eb_major <= 0) {
 		printk(KERN_ERR "eb: Unable to get Major Number\n");
-		eeprom_device_cleanup();
 		return -EBUSY;
 	}
 
 	/* Get a request queue (here queue is created) */
 	spin_lock_init(&eb_dev.lock);
 	eb_dev.eb_queue = blk_init_queue(eb_request, &eb_dev.lock);
-	if (eb_dev.eb_queue == NULL)
-	{
+	if (eb_dev.eb_queue == NULL) {
 		printk(KERN_ERR "eb: blk_init_queue failure\n");
 		unregister_blkdev(eb_major, "eb");
-		eeprom_device_cleanup();
 		return -ENOMEM;
 	}
-	
+
 	/*
 	 * Add the gendisk structure
 	 * By using this memory allocation is involved, 
@@ -186,22 +178,20 @@ static int __init eb_init(void)
 	 * will support this much partitions 
 	 */
 	eb_dev.eb_disk = alloc_disk(EB_MINOR_CNT);
-	if (!eb_dev.eb_disk)
-	{
+	if (!eb_dev.eb_disk) {
 		printk(KERN_ERR "eb: alloc_disk failure\n");
 		blk_cleanup_queue(eb_dev.eb_queue);
 		unregister_blkdev(eb_major, "eb");
-		eeprom_device_cleanup();
 		return -ENOMEM;
 	}
 
- 	/* Setting the major number */
+	/* Setting the major number */
 	eb_dev.eb_disk->major = eb_major;
-  	/* Setting the first mior number */
+	/* Setting the first mior number */
 	eb_dev.eb_disk->first_minor = EB_FIRST_MINOR;
- 	/* Initializing the device operations */
+	/* Initializing the device operations */
 	eb_dev.eb_disk->fops = &eb_fops;
- 	/* Driver-specific own internal data */
+	/* Driver-specific own internal data */
 	eb_dev.eb_disk->private_data = &eb_dev;
 	eb_dev.eb_disk->queue = eb_dev.eb_queue;
 	/*
@@ -217,10 +207,11 @@ static int __init eb_init(void)
 	add_disk(eb_dev.eb_disk);
 	/* Now the disk is "live" */
 	printk(KERN_INFO "eb: Eeprom Block driver initialised (%d sectors; %d bytes)\n",
-		eb_dev.size, eb_dev.size * EB_SECTOR_SIZE);
+			eb_dev.size, eb_dev.size * EB_SECTOR_SIZE);
 
 	return 0;
 }
+
 /*
  * This is the unregistration and uninitialization section of the eeprom block
  * device driver
@@ -231,13 +222,12 @@ static void __exit eb_cleanup(void)
 	put_disk(eb_dev.eb_disk);
 	blk_cleanup_queue(eb_dev.eb_queue);
 	unregister_blkdev(eb_major, "eb");
-	eeprom_device_cleanup();
 }
 
 module_init(eb_init);
 module_exit(eb_cleanup);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Taras Drozdovsky <t.drozdovskiy@gmail.com>");
-MODULE_DESCRIPTION("EEPROM Block Driver");
+MODULE_AUTHOR("Taras Drozdovskyi <t.drozdovskiy@gmail.com>");
+MODULE_DESCRIPTION("EEPROM Block Device Driver");
 MODULE_ALIAS_BLOCKDEV_MAJOR(eb_major);
